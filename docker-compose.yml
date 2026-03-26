@@ -1,0 +1,69 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: bigdataspark-postgres
+    environment:
+      POSTGRES_DB: bigdataspark
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - "./docker/init:/docker-entrypoint-initdb.d:ro"
+      - "./исходные данные:/data:ro"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d bigdataspark"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  spark:
+    image: apache/spark:3.5.1
+    container_name: bigdataspark-spark
+    depends_on:
+      postgres:
+        condition: service_healthy
+      clickhouse:
+        condition: service_started
+    environment:
+      SPARK_MODE: client
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: bigdataspark
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      CH_HOST: clickhouse
+      CH_PORT: 8123
+      CH_DB: default
+      CH_USER: default
+      CH_PASSWORD: ""
+    volumes:
+      - "./spark/jobs:/opt/spark/jobs:ro"
+      - "./sql:/opt/spark/sql:ro"
+      - "./исходные данные:/data:ro"
+    working_dir: /opt/spark
+    command:
+      - /bin/bash
+      - -lc
+      - >
+        /opt/spark/bin/spark-submit
+        --packages org.postgresql:postgresql:42.7.3,com.clickhouse:clickhouse-jdbc:0.6.3
+        /opt/spark/jobs/etl_star_to_postgres.py
+        &&
+        /opt/spark/bin/spark-submit
+        --packages org.postgresql:postgresql:42.7.3,com.clickhouse:clickhouse-jdbc:0.6.3
+        /opt/spark/jobs/etl_star_to_clickhouse.py
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8
+    container_name: bigdataspark-clickhouse
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    volumes:
+      - chdata:/var/lib/clickhouse
+
+volumes:
+  pgdata:
+  chdata:

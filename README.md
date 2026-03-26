@@ -85,3 +85,34 @@
 7. Код Apache Spark трансформации данных из снежинки/звезды в отчеты в Neo4j.
 8. Код Apache Spark трансформации данных из снежинки/звезды в отчеты в MongoDB.
 9. Код Apache Spark трансформации данных из снежинки/звезды в отчеты в Valkey.
+
+## Текущая реализация: Spark ETL в PostgreSQL + ClickHouse
+
+В репозитории добавлена реализация обязательных этапов:
+- поднятие PostgreSQL, Spark и ClickHouse через Docker Compose;
+- автоимпорт всех `mock_data*.csv` в `public.mock_data_raw`;
+- Spark ETL, который заполняет `mart`-схему (звезда: измерения и факт продаж).
+- Spark ETL, который строит 6 витрин в ClickHouse.
+
+### Структура
+
+- `docker-compose.yml` - контейнеры PostgreSQL + Spark + ClickHouse.
+- `docker/init/01_create.sql` - создание таблицы `public.mock_data_raw`.
+- `docker/init/02_load.sh` - загрузка всех CSV из `исходные данные` в `public.mock_data_raw`.
+- `spark/jobs/etl_star_to_postgres.py` - Spark job трансформации в `mart.*`.
+- `spark/jobs/etl_star_to_clickhouse.py` - Spark job построения 6 витрин в ClickHouse.
+- `sql/01_ddl_star.sql` - DDL + очистка таблиц звезды PostgreSQL (используется Spark job).
+- `sql/02_ddl_clickhouse.sql` - DDL таблиц отчетов ClickHouse (используется Spark job).
+
+### Быстрый запуск
+
+```bash
+docker compose up --build
+```
+
+После запуска:
+- PostgreSQL: `localhost:5432`, БД `bigdataspark`, пользователь `postgres`, пароль `postgres`.
+- ClickHouse: `localhost:8123` (HTTP), `localhost:9000` (native), БД `default`.
+- Spark-контейнер последовательно запускает:
+  1) `etl_star_to_postgres.py`
+  2) `etl_star_to_clickhouse.py`
