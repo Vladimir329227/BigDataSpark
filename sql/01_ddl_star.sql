@@ -45,18 +45,6 @@ CREATE TABLE IF NOT EXISTS mart.dim_store (
     CONSTRAINT uq_dim_store UNIQUE (store_name, city, state, country)
 );
 
-CREATE TABLE IF NOT EXISTS mart.dim_supplier (
-    supplier_id  BIGSERIAL PRIMARY KEY,
-    name         TEXT,
-    contact      TEXT,
-    email        TEXT,
-    phone        TEXT,
-    address      TEXT,
-    city         TEXT,
-    country      TEXT,
-    CONSTRAINT uq_dim_supplier UNIQUE (name, email)
-);
-
 CREATE TABLE IF NOT EXISTS mart.dim_product (
     product_id         BIGSERIAL PRIMARY KEY,
     product_source_id  INTEGER UNIQUE,
@@ -74,7 +62,13 @@ CREATE TABLE IF NOT EXISTS mart.dim_product (
     reviews            INTEGER,
     release_date       DATE,
     expiry_date        DATE,
-    supplier_id        BIGINT REFERENCES mart.dim_supplier (supplier_id)
+    supplier_name      TEXT,
+    supplier_contact   TEXT,
+    supplier_email     TEXT,
+    supplier_phone     TEXT,
+    supplier_address   TEXT,
+    supplier_city      TEXT,
+    supplier_country   TEXT
 );
 
 CREATE TABLE IF NOT EXISTS mart.fact_sales (
@@ -90,7 +84,6 @@ CREATE TABLE IF NOT EXISTS mart.fact_sales (
 
 TRUNCATE TABLE mart.fact_sales RESTART IDENTITY;
 TRUNCATE TABLE mart.dim_product RESTART IDENTITY CASCADE;
-TRUNCATE TABLE mart.dim_supplier RESTART IDENTITY CASCADE;
 TRUNCATE TABLE mart.dim_store RESTART IDENTITY CASCADE;
 TRUNCATE TABLE mart.dim_seller RESTART IDENTITY CASCADE;
 TRUNCATE TABLE mart.dim_customer RESTART IDENTITY CASCADE;

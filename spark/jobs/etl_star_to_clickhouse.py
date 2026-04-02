@@ -1,7 +1,7 @@
 import os
 
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import avg, col, count, corr, dense_rank, sum as sum_
+from pyspark.sql.functions import avg, col, count, corr, dense_rank, desc, lit, sum as sum_
 from pyspark.sql.window import Window
 
 
@@ -48,9 +48,8 @@ def main():
     dim_customer = spark.read.jdbc(pg_url, "mart.dim_customer", properties=pg_props)
     dim_date = spark.read.jdbc(pg_url, "mart.dim_date", properties=pg_props)
     dim_store = spark.read.jdbc(pg_url, "mart.dim_store", properties=pg_props)
-    dim_supplier = spark.read.jdbc(pg_url, "mart.dim_supplier", properties=pg_props)
 
-    # 1) Витрина продаж по продуктам:
+    # 1) PRODUCTS (3 tables)
     report_products_base = (
         fact_sales.join(dim_product, "product_id", "left")
         .groupBy("product_id", "name", "category")
@@ -61,25 +60,36 @@ def main():
             sum_("reviews").alias("reviews_count"),
         )
     )
-    report_products = (
-        report_products_base.withColumn(
-            "category_revenue",
-            sum_("total_revenue").over(Window.partitionBy("category")),
-        )
+    report_products_top10 = (
+        report_products_base.orderBy(desc("total_quantity"))
+        .limit(10)
         .select(
             col("product_id"),
             col("name").alias("product_name"),
             col("category").alias("product_category"),
-            col("total_revenue"),
             col("total_quantity"),
-            col("category_revenue"),
-            col("avg_rating"),
-            col("reviews_count"),
+            col("total_revenue"),
         )
     )
-    report_products.write.mode("append").jdbc(ch_url, "report_sales_by_products", properties=ch_props)
+    report_products_top10.write.mode("append").jdbc(ch_url, "report_products_top10", properties=ch_props)
+    report_products_category_revenue = report_products_base.groupBy("category").agg(
+        sum_("total_revenue").alias("total_revenue")
+    ).select(col("category").alias("product_category"), col("total_revenue"))
+    report_products_category_revenue.write.mode("append").jdbc(
+        ch_url, "report_products_category_revenue", properties=ch_props
+    )
+    report_products_rating_reviews = report_products_base.select(
+        col("product_id"),
+        col("name").alias("product_name"),
+        col("category").alias("product_category"),
+        col("avg_rating"),
+        col("reviews_count"),
+    )
+    report_products_rating_reviews.write.mode("append").jdbc(
+        ch_url, "report_products_rating_reviews", properties=ch_props
+    )
 
-    # 2) Витрина продаж по клиентам:
+    # 2) CUSTOMERS (3 tables)
     report_customers_base = (
         fact_sales.join(dim_customer, "customer_id", "left")
         .groupBy("customer_id", "first_name", "last_name", "country")
@@ -89,14 +99,27 @@ def main():
             avg("sale_total").alias("avg_check"),
         )
     )
-    report_customers = report_customers_base.withColumn(
-        "country_customers_count",
-        count("*").over(Window.partitionBy("country")),
+    report_customers_top10 = report_customers_base.orderBy(desc("total_spent")).limit(10).select(
+        "customer_id", "first_name", "last_name", "country", "total_spent"
     )
-    report_customers.write.mode("append").jdbc(ch_url, "report_sales_by_customers", properties=ch_props)
+    report_customers_top10.write.mode("append").jdbc(ch_url, "report_customers_top10", properties=ch_props)
+    report_customers_country_distribution = (
+        report_customers_base.groupBy("country")
+        .agg(count("*").alias("customers_count"))
+        .select("country", "customers_count")
+    )
+    report_customers_country_distribution.write.mode("append").jdbc(
+        ch_url, "report_customers_country_distribution", properties=ch_props
+    )
+    report_customers_avg_check = report_customers_base.select(
+        "customer_id", "first_name", "last_name", "avg_check"
+    )
+    report_customers_avg_check.write.mode("append").jdbc(
+        ch_url, "report_customers_avg_check", properties=ch_props
+    )
 
-    # 3) Витрина продаж по времени
-    report_time = (
+    # 3) TIME (3 tables)
+    report_time_base = (
         fact_sales.join(dim_date, "date_id", "left")
         .groupBy("year", "month")
         .agg(
@@ -104,11 +127,23 @@ def main():
             sum_("sale_total").alias("total_revenue"),
             avg("sale_total").alias("avg_order_value"),
         )
-        .orderBy("year", "month")
     )
-    report_time.write.mode("append").jdbc(ch_url, "report_sales_by_time", properties=ch_props)
+    report_time_monthly_trends = report_time_base.select("year", "month", "total_revenue", "orders_count")
+    report_time_monthly_trends.write.mode("append").jdbc(
+        ch_url, "report_time_monthly_trends", properties=ch_props
+    )
+    report_time_period_revenue = report_time_base.groupBy("year").agg(
+        sum_("total_revenue").alias("total_revenue")
+    )
+    report_time_period_revenue.write.mode("append").jdbc(
+        ch_url, "report_time_period_revenue", properties=ch_props
+    )
+    report_time_avg_order = report_time_base.select("year", "month", col("avg_order_value"))
+    report_time_avg_order.write.mode("append").jdbc(
+        ch_url, "report_time_avg_order_by_month", properties=ch_props
+    )
 
-    # 4) Витрина продаж по магазинам:
+    # 4) STORES (3 tables)
     report_stores_base = (
         fact_sales.join(dim_store, "store_id", "left")
         .groupBy("store_id", "store_name", "city", "country")
@@ -118,41 +153,55 @@ def main():
             avg("sale_total").alias("avg_check"),
         )
     )
-    report_stores = report_stores_base.withColumn(
-        "city_country_revenue",
-        sum_("total_revenue").over(Window.partitionBy("city", "country")),
+    report_stores_top5 = report_stores_base.orderBy(desc("total_revenue")).limit(5).select(
+        "store_id", "store_name", "city", "country", "total_revenue"
     )
-    report_stores.write.mode("append").jdbc(ch_url, "report_sales_by_stores", properties=ch_props)
+    report_stores_top5.write.mode("append").jdbc(ch_url, "report_stores_top5", properties=ch_props)
+    report_stores_distribution = report_stores_base.groupBy("city", "country").agg(
+        sum_("total_revenue").alias("total_revenue"),
+        sum_("orders_count").alias("orders_count"),
+    )
+    report_stores_distribution.write.mode("append").jdbc(
+        ch_url, "report_stores_city_country_distribution", properties=ch_props
+    )
+    report_stores_avg_check = report_stores_base.select("store_id", "store_name", "avg_check")
+    report_stores_avg_check.write.mode("append").jdbc(
+        ch_url, "report_stores_avg_check", properties=ch_props
+    )
 
-    # 5) Витрина продаж по поставщикам:
+    # 5) SUPPLIERS (3 tables)
     report_suppliers_base = (
         fact_sales.join(dim_product, "product_id", "left")
-        .join(dim_supplier, "supplier_id", "left")
-        .groupBy("supplier_id", "name", "country")
+        .groupBy("supplier_name", "supplier_country")
         .agg(
             count("product_id").alias("products_count"),
             sum_("sale_total").alias("total_revenue"),
             avg("price").alias("avg_product_price"),
         )
     )
-    report_suppliers = (
-        report_suppliers_base.withColumn(
-            "supplier_country_revenue",
-            sum_("total_revenue").over(Window.partitionBy("country")),
-        )
-        .select(
-            col("supplier_id"),
-            col("name").alias("supplier_name"),
-            col("country").alias("supplier_country"),
-            col("products_count"),
-            col("total_revenue"),
-            col("avg_product_price"),
-            col("supplier_country_revenue"),
-        )
+    report_suppliers_top5 = report_suppliers_base.orderBy(desc("total_revenue")).limit(5).select(
+        lit(None).cast("long").alias("supplier_id"),
+        col("supplier_name"),
+        col("supplier_country"),
+        col("total_revenue"),
     )
-    report_suppliers.write.mode("append").jdbc(ch_url, "report_sales_by_suppliers", properties=ch_props)
+    report_suppliers_top5.write.mode("append").jdbc(ch_url, "report_suppliers_top5", properties=ch_props)
+    report_suppliers_avg_price = report_suppliers_base.select(
+        lit(None).cast("long").alias("supplier_id"),
+        col("supplier_name"),
+        col("avg_product_price"),
+    )
+    report_suppliers_avg_price.write.mode("append").jdbc(
+        ch_url, "report_suppliers_avg_price", properties=ch_props
+    )
+    report_suppliers_country_distribution = report_suppliers_base.groupBy("supplier_country").agg(
+        sum_("total_revenue").alias("total_revenue")
+    ).select(col("supplier_country"), col("total_revenue"))
+    report_suppliers_country_distribution.write.mode("append").jdbc(
+        ch_url, "report_suppliers_country_distribution", properties=ch_props
+    )
 
-    # 6) Витрина качества продукции:
+    # 6) QUALITY (3 tables)
     report_quality_base = (
         fact_sales.join(dim_product, "product_id", "left")
         .groupBy("product_id", "name", "category", "rating", "reviews")
@@ -162,24 +211,34 @@ def main():
     rank_by_best = Window.orderBy(col("rating").desc(), col("reviews").desc())
     rank_by_worst = Window.orderBy(col("rating").asc(), col("reviews").desc())
 
-    report_quality = (
+    report_quality_rank = (
         report_quality_base
         .withColumn("rank_best", dense_rank().over(rank_by_best))
         .withColumn("rank_worst", dense_rank().over(rank_by_worst))
-        .withColumn("rating_sales_correlation", col("rating") * 0 + corr_value)
         .select(
             col("product_id"),
             col("name").alias("product_name"),
-            col("category").alias("product_category"),
             col("rating"),
-            col("reviews"),
-            col("sold_quantity"),
             col("rank_best"),
             col("rank_worst"),
-            col("rating_sales_correlation"),
         )
     )
-    report_quality.write.mode("append").jdbc(ch_url, "report_product_quality", properties=ch_props)
+    report_quality_rank.write.mode("append").jdbc(
+        ch_url, "report_quality_high_low_rating", properties=ch_props
+    )
+    report_quality_correlation = spark.createDataFrame(
+        [("rating_sales_correlation", float(corr_value))],
+        ["metric", "correlation_value"],
+    ).select(col("metric"), col("correlation_value").cast("decimal(10,6)"))
+    report_quality_correlation.write.mode("append").jdbc(
+        ch_url, "report_quality_rating_sales_correlation", properties=ch_props
+    )
+    report_quality_top_reviews = report_quality_base.orderBy(desc("reviews")).limit(10).select(
+        col("product_id"), col("name").alias("product_name"), col("reviews")
+    )
+    report_quality_top_reviews.write.mode("append").jdbc(
+        ch_url, "report_quality_top_reviews", properties=ch_props
+    )
 
     spark.stop()
 

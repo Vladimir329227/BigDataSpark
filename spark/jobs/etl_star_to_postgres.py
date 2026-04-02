@@ -127,23 +127,6 @@ def main():
     )
     dim_store.write.mode("append").jdbc(jdbc_url, "mart.dim_store", properties=props)
 
-    dim_supplier = (
-        raw_df.select(
-            col("supplier_name").alias("name"),
-            col("supplier_contact").alias("contact"),
-            col("supplier_email").alias("email"),
-            col("supplier_phone").alias("phone"),
-            col("supplier_address").alias("address"),
-            col("supplier_city").alias("city"),
-            col("supplier_country").alias("country"),
-        )
-        .dropDuplicates(["name", "email"])
-    )
-    dim_supplier.write.mode("append").jdbc(jdbc_url, "mart.dim_supplier", properties=props)
-
-    supplier_ref = spark.read.jdbc(jdbc_url, "mart.dim_supplier", properties=props).select(
-        col("supplier_id"), col("name"), col("email")
-    )
     product_stage = raw_df.select(
         as_int("sale_product_id").alias("product_source_id"),
         col("product_name").alias("name"),
@@ -161,17 +144,16 @@ def main():
         release_date.alias("release_date"),
         expiry_date.alias("expiry_date"),
         col("supplier_name"),
+        col("supplier_contact"),
         col("supplier_email"),
+        col("supplier_phone"),
+        col("supplier_address"),
+        col("supplier_city"),
+        col("supplier_country"),
     )
 
     dim_product = (
-        product_stage.join(
-            supplier_ref,
-            (product_stage.supplier_name == supplier_ref.name)
-            & (product_stage.supplier_email.eqNullSafe(supplier_ref.email)),
-            "left",
-        )
-        .select(
+        product_stage.select(
             "product_source_id",
             "name",
             "category",
@@ -187,7 +169,13 @@ def main():
             "reviews",
             "release_date",
             "expiry_date",
-            "supplier_id",
+            "supplier_name",
+            "supplier_contact",
+            "supplier_email",
+            "supplier_phone",
+            "supplier_address",
+            "supplier_city",
+            "supplier_country",
         )
         .dropDuplicates(["product_source_id"])
         .where(col("product_source_id").isNotNull())

@@ -92,7 +92,9 @@
 - поднятие PostgreSQL, Spark и ClickHouse через Docker Compose;
 - автоимпорт всех `mock_data*.csv` в `public.mock_data_raw`;
 - Spark ETL, который заполняет `mart`-схему (звезда: измерения и факт продаж).
-- Spark ETL, который строит 6 витрин в ClickHouse.
+- Spark ETL, который строит 18 витрин в ClickHouse (6 направлений по 3 отчета).
+
+Модель `mart` реализована как звезда: поставщик денормализован в `dim_product` (без отдельной таблицы `dim_supplier`).
 
 ### Структура
 
@@ -100,7 +102,7 @@
 - `docker/init/01_create.sql` - создание таблицы `public.mock_data_raw`.
 - `docker/init/02_load.sh` - загрузка всех CSV из `исходные данные` в `public.mock_data_raw`.
 - `spark/jobs/etl_star_to_postgres.py` - Spark job трансформации в `mart.*`.
-- `spark/jobs/etl_star_to_clickhouse.py` - Spark job построения 6 витрин в ClickHouse.
+- `spark/jobs/etl_star_to_clickhouse.py` - Spark job построения 18 витрин в ClickHouse.
 - `sql/01_ddl_star.sql` - DDL + очистка таблиц звезды PostgreSQL (используется Spark job).
 - `sql/02_ddl_clickhouse.sql` - DDL таблиц отчетов ClickHouse (используется Spark job).
 
